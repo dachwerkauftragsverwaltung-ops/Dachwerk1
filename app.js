@@ -9,6 +9,7 @@ const defaultM=[['02 ATTIKA ABDECKUNG Aluminium','m'],['02 Alublech 0,7mm','m²'
 const defaultS=[['12 Hubsteiger Stunden','Stunden'],['12 Gerüst - Leihdauer 4 Wochen','m²'],['12 Rollgerüst','Stück'],['12 Bockgerüst','Stück'],['12 Dachbockgerüst','Stück']];
 let materials=read(MAT_KEY,defaultM.map(x=>({id:uid(),name:x[0],unit:x[1]}))), setups=read(SET_KEY,defaultS.map(x=>({id:uid(),name:x[0],unit:x[1]}))), orders=read(ORDERS_KEY,[]);
 function showView(n){document.querySelectorAll('.appview').forEach(v=>v.hidden=true);let v=$('view-'+n);if(!v)return;v.hidden=false;document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.view===n));if(n==='auftraege')renderOrders();if(n==='buero')renderOffice();if(n==='stammdaten')renderMasters()}
+function openAufmass(){if(!currentOrderId){showView('auftraege');alert('Bitte zuerst einen bestehenden Auftrag öffnen oder einen neuen Auftrag speichern. Danach kannst du hier das Aufmaß erstellen.');return}showView('auftrag');setTimeout(()=>document.querySelector('.technical-drawing-card')?.scrollIntoView({behavior:'smooth',block:'start'}),100)}
 function nextNo(dateValue){let d=dateValue||new Date().toISOString().slice(0,10);let nums=orders.map(o=>String(o.auftragsnr||'')).filter(x=>x.startsWith(d+'-')).map(x=>parseInt(x.split('-').pop(),10)||0);return d+'-'+(Math.max(0,...nums)+1)}
 async function newOrder(){currentOrderId=null;showView('auftrag');resetForm();updateLabel();if(isCloudUser()){const date=$('datum').value;const {data,error}=await sb().rpc('dachwerk_next_order_number',{target_date:date});if(error){alert('Auftragsnummer konnte nicht zentral reserviert werden. Bitte zuerst die zusätzliche SQL-Abfrage ausführen. ('+error.message+')');return}if(data)$('auftragsnr').value=data;updateLabel()}}
 function resetForm(){['angebotsnr','kunde','kontakt','objekt','montageHinweis','arbeiten','signOrt'].forEach(i=>$(i).value='');let d=new Date().toISOString().slice(0,10);$('datum').value=d;$('auftragsnr').value=nextNo(d);$('montageDatum').value=d;$('montageZeit').value='08:00';$('signDatum').value=d;$('status').value='offen';$('addressStatus').textContent='';photos=[];renderPhotos();$('employeeRows').innerHTML='';addEmployeeRow();$('fahrtkostenRows').innerHTML='';addFahrtkosten({datum:d,betrag:'49.00'});$('material').innerHTML='';addMaterial();$('baustellenkosten').innerHTML='';addSetupRow();clearSig('sigKunde');clearSig('sigFirma');updateLabel()}
@@ -343,14 +344,13 @@ function renderTagesplanStops(){
 
 // KI-Dachzeichnung: separater Workflow, bestehende Auftrags- und Fotodaten bleiben erhalten.
 let technicalDrawingResultUrl = '';
-let technicalDrawingAnnotatedSrc = '';
 function setTechnicalDrawingStatus(message, error=false){const el=$('technicalDrawingStatus');if(el){el.textContent=message;el.style.color=error?'#a22':''}}
 async function generateTechnicalDrawing(){
  const input=$('technicalDrawingInput'),file=input?.files?.[0],button=$('generateTechnicalDrawingButton');
  if(!file){setTechnicalDrawingStatus('Bitte zuerst ein Dachfoto auswählen.',true);return}
  if(!isCloudUser()||!window.dachwerkSupabase){setTechnicalDrawingStatus('Bitte mit einem freigegebenen DACHWERK-Konto anmelden.',true);return}
  if(!currentOrderId){setTechnicalDrawingStatus('Bitte den Auftrag zuerst speichern. Danach kannst du die Zeichnung direkt diesem Auftrag zuordnen.',true);return}
- button.disabled=true;$('addTechnicalDrawingButton').disabled=true;$('writeTechnicalDimensionsButton').disabled=true;technicalDrawingAnnotatedSrc='';setTechnicalDrawingStatus('Foto wird vorbereitet …');
+ button.disabled=true;$('addTechnicalDrawingButton').disabled=true;setTechnicalDrawingStatus('Foto wird vorbereitet …');
  try{
   const compressed=await compress(file);setTechnicalDrawingStatus('WaveSpeedAI-Auftrag wird gestartet …');
   const client=window.dachwerkSupabase;
@@ -361,33 +361,18 @@ async function generateTechnicalDrawing(){
   const started=Date.now();let imageUrl='';
   while(Date.now()-started<180000){await new Promise(r=>setTimeout(r,3000));setTechnicalDrawingStatus('Technische Zeichnung wird erstellt …');const {data:status,error:statusError}=await client.functions.invoke('dachwerk-technical-drawing',{body:{action:'status',predictionId:taskId}});if(statusError)throw new Error(statusError.message||'Statusabfrage fehlgeschlagen');if(status?.error)throw new Error(status.error);const state=String(status?.status||'').toLowerCase();if(state==='completed'){imageUrl=status.imageUrl||status.outputs?.[0]||'';break}if(['failed','cancelled','timeout','deleted'].includes(state))throw new Error(status.error||'WaveSpeedAI konnte die Zeichnung nicht erstellen.');}
   if(!imageUrl)throw new Error('Die Erstellung dauert zu lange. Prüfe zuerst die WaveSpeedAI-Historie, bevor du erneut startest.');
-  technicalDrawingResultUrl=imageUrl;technicalDrawingAnnotatedSrc='';$('technicalDrawingImage').src=imageUrl;$('technicalDrawingPreview').hidden=false;$('writeTechnicalDimensionsButton').disabled=false;
+  technicalDrawingResultUrl=imageUrl;$('technicalDrawingImage').src=imageUrl;$('technicalDrawingPreview').hidden=false;
   const dims=[$('technicalDrawingLength').value.trim()&&('Länge: '+$('technicalDrawingLength').value.trim()),$('technicalDrawingWidth').value.trim()&&('Breite: '+$('technicalDrawingWidth').value.trim()),$('technicalDrawingNotes').value.trim()].filter(Boolean).join(' · ');
   $('technicalDrawingCaption').textContent=( $('technicalDrawingView').value==='plan'?'Dachaufsicht':'Dachansicht')+(dims?' — '+dims:'')+'. KI-Skizze; Maße nicht automatisch vermessen.';
   $('addTechnicalDrawingButton').disabled=false;setTechnicalDrawingStatus('Zeichnung erstellt. Prüfe die Skizze und ergänze Maße, bevor du sie zum Auftrag speicherst.');
  }catch(e){setTechnicalDrawingStatus('Fehler: '+(e.message||e),true)}finally{button.disabled=false}
-}
-async function technicalDrawingToDataUrl(){
- if(technicalDrawingAnnotatedSrc)return technicalDrawingAnnotatedSrc;
- const response=await fetch(technicalDrawingResultUrl);if(!response.ok)throw new Error('Bildabruf fehlgeschlagen');const blob=await response.blob();return await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob)});
-}
-async function writeTechnicalDimensionsOnImage(){
- if(!technicalDrawingResultUrl){setTechnicalDrawingStatus('Bitte zuerst eine Zeichnung erstellen.',true);return}
- const btn=$('writeTechnicalDimensionsButton');btn.disabled=true;
- try{
-  const src=await technicalDrawingToDataUrl();const img=new Image();img.src=src;await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Zeichnungsbild konnte nicht geladen werden.'))});
-  const scale=Math.min(1,1800/Math.max(img.naturalWidth,img.naturalHeight));const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,w,h);
-  const length=$('technicalDrawingLength').value.trim(),width=$('technicalDrawingWidth').value.trim(),notes=$('technicalDrawingNotes').value.trim();const rows=[];if(length)rows.push('Länge: '+length);if(width)rows.push('Breite: '+width);if(notes)rows.push('Weitere Maße / Hinweise: '+notes);if(!rows.length)throw new Error('Bitte zuerst mindestens ein Maß oder einen Hinweis eintragen.');
-  const font=Math.max(18,Math.round(w*.024)),pad=Math.max(14,Math.round(w*.018)),line=Math.round(font*1.45);ctx.font=`600 ${font}px Arial, sans-serif`;const wrapped=[];for(const row of rows){let current='';for(const word of row.split(/\s+/)){const test=current?current+' '+word:word;if(ctx.measureText(test).width>w-pad*2&&current){wrapped.push(current);current=word}else current=test}if(current)wrapped.push(current)}const panelH=pad*2+wrapped.length*line;ctx.fillStyle='rgba(255,255,255,0.96)';ctx.fillRect(0,h-panelH,w,panelH);ctx.strokeStyle='#222';ctx.lineWidth=Math.max(2,w*.002);ctx.beginPath();ctx.moveTo(0,h-panelH);ctx.lineTo(w,h-panelH);ctx.stroke();ctx.fillStyle='#111';wrapped.forEach((row,i)=>ctx.fillText(row,pad,h-panelH+pad+font+i*line,w-pad*2));
-  technicalDrawingAnnotatedSrc=canvas.toDataURL('image/jpeg',.92);$('technicalDrawingImage').src=technicalDrawingAnnotatedSrc;$('addTechnicalDrawingButton').disabled=false;setTechnicalDrawingStatus('Maße wurden sichtbar unten in das Bild geschrieben. Du kannst die Felder ändern und erneut auf „Maße ins Bild schreiben“ tippen.');
- }catch(e){setTechnicalDrawingStatus('Fehler beim Beschriften: '+(e.message||e),true)}finally{btn.disabled=false}
 }
 async function addTechnicalDrawingToPhotos(){
  if(!technicalDrawingResultUrl){setTechnicalDrawingStatus('Bitte zuerst eine Zeichnung erstellen.',true);return}
  const btn=$('addTechnicalDrawingButton');btn.disabled=true;
  try{
   let src='';
-  try{src=technicalDrawingAnnotatedSrc||await technicalDrawingToDataUrl()}catch(_){throw new Error('Das Ergebnisbild kann vom Browser nicht dauerhaft übernommen werden (WaveSpeedAI-Bild-URL/CORS). Bitte prüfe die Supabase-Logs bzw. WaveSpeedAI-Ausgabe.')}
+  try{const response=await fetch(technicalDrawingResultUrl);if(!response.ok)throw new Error('Bildabruf fehlgeschlagen');const blob=await response.blob();src=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob)})}catch(_){throw new Error('Das Ergebnisbild kann vom Browser nicht dauerhaft übernommen werden (WaveSpeedAI-Bild-URL/CORS). Bitte prüfe die Supabase-Logs bzw. WaveSpeedAI-Ausgabe.')}
   const dims=[$('technicalDrawingLength').value.trim()&&('Länge '+$('technicalDrawingLength').value.trim()),$('technicalDrawingWidth').value.trim()&&('Breite '+$('technicalDrawingWidth').value.trim()),$('technicalDrawingNotes').value.trim()].filter(Boolean).join(' · ');
   const view=$('technicalDrawingView').value==='plan'?'Dachaufsicht':'Dachansicht';
   photos.push({src,size:Math.round(src.length*.75),name:`Technische Zeichnung – ${view}${dims?' – '+dims:''}.jpg`,technicalDrawing:true,view,length:$('technicalDrawingLength').value.trim(),width:$('technicalDrawingWidth').value.trim(),notes:$('technicalDrawingNotes').value.trim()});
