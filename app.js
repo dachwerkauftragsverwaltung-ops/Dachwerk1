@@ -67,9 +67,9 @@ async function uploadOrderPhotos(d){const client=sb(),old=orders.find(o=>o.id===
 async function saveOrder(){let d=collect();if(!d.kunde&&!d.objekt){alert('Bitte Auftraggeber oder Objektadresse eintragen.');return}if(!isCloudUser()){alert('Bitte zuerst anmelden und auf die Benutzerfreigabe warten.');return}const button=document.querySelector('#view-auftrag .actions .primary');if(button){button.disabled=true;button.textContent='Wird gespeichert …'}try{cloudBusy=true;d=await uploadOrderPhotos(d);const stored={...d,photos:d.photos.map(({src,...p})=>p)};const {error}=await sb().from('dachwerk_orders').upsert({id:d.id,order_number:d.auftragsnr,data:stored,created_by:window.dachwerkUser.id,updated_at:new Date().toISOString()},{onConflict:'id'});if(error)throw error;let i=orders.findIndex(x=>x.id===d.id);if(i<0)orders.push(d);else orders[i]=d;currentOrderId=d.id;write(ORDERS_KEY,orders);updateLabel();renderOrders();renderOffice();updateStorage();alert('Auftrag zentral in Supabase gespeichert. Andere freigegebene Benutzer sehen ihn nach dem Laden bzw. per Live-Sync.')}catch(e){cloudError(e,'Auftrag/Fotos speichern')}finally{cloudBusy=false;if(button){button.disabled=false;button.textContent='Auftrag speichern'}}}
 async function deleteOrder(id){if(!confirm('Auftrag inklusive aller Baustellenfotos wirklich löschen?'))return;if(!isCloudUser()){alert('Bitte zuerst anmelden.');return}const order=orders.find(x=>x.id===id);try{const paths=(order?.photos||[]).map(p=>p.path).filter(Boolean);if(paths.length){const {error:storageError}=await sb().storage.from('dachwerk-photos').remove(paths);if(storageError)throw storageError}const {error}=await sb().from('dachwerk_orders').delete().eq('id',id);if(error)throw error;orders=orders.filter(x=>x.id!==id);write(ORDERS_KEY,orders);renderOrders();renderOffice();updateStorage();alert('Auftrag und gespeicherte Fotos wurden gelöscht.')}catch(e){cloudError(e,'Auftrag löschen; Datensatz blieb soweit möglich erhalten')}}
 function openOrder(id){let d=orders.find(x=>x.id===id);if(!d)return;currentOrderId=id;showView('auftrag');['auftragsnr','angebotsnr','kunde','kontakt','datum','objekt','arbeiten','status'].forEach(k=>$(k).value=d[k]||'');$('signOrt').value=d.signOrt||'';$('signDatum').value=d.signDatum||d.datum||'';loadSignature('sigKunde',d.signatures?.customer);loadSignature('sigFirma',d.signatures?.employee);$('terminArt').value=d.montage?.art||'Montagetermin';$('montageDatum').value=d.montage?.datum||'';$('montageZeit').value=d.montage?.zeit||'';$('montageHinweis').value=d.montage?.hinweis||'';$('fahrtkostenRows').innerHTML='';let fk=d.fahrtkosten||((d.fahrt?.kosten||d.fahrt?.km||d.fahrt?.hinweis)?[{datum:d.datum||'',betrag:d.fahrt?.kosten||'49.00'}]:[{datum:d.datum||'',betrag:'49.00'}]);fk.forEach(addFahrtkosten);if(!fk.length)addFahrtkosten({datum:d.datum||'',betrag:'49.00'});$('employeeRows').innerHTML='';(d.employees||[]).forEach(addEmployeeRow);$('material').innerHTML='';(d.materials||[]).forEach(addMaterial);$('baustellenkosten').innerHTML='';(d.setup||[]).forEach(addSetupRow);photos=(d.photos||[]).map(x=>({...x}));renderPhotos();updateLabel()}
-function orderCard(o){let d=document.createElement('article');d.className='order-card';let m=o.montage||{};let statusLabel={offen:'Offen',bearbeitung:'In Bearbeitung',erledigt:'Erledigt',abgeschlossen:'Abgeschlossen'}[o.status]||o.status||'Offen';d.innerHTML=`<div class="order-main"><div><span class="eyebrow">${statusLabel}</span><h3>${o.auftragsnr||''} · ${o.kunde||'Ohne Auftraggeber'}</h3><p>📅 <b>${m.art||'Montagetermin'}:</b> ${m.datum?new Date(m.datum+'T12:00').toLocaleDateString('de-DE'): 'nicht geplant'} ${m.zeit?'· '+m.zeit+' Uhr':''}</p><p>📍 ${o.objekt||'Keine Adresse hinterlegt'}</p>${o.angebotsnr?`<p>🏷️ Angebot: ${o.angebotsnr}</p>`:''}</div><div class="order-actions"><button onclick="openOrder('${o.id}')">Öffnen</button><button onclick="navigateTo('${encodeURIComponent(o.objekt||'')}')">🧭 Ab zur Baustelle</button><button onclick="addOrderToCalendar('${o.id}')">📅 Kalender</button><button class="danger" onclick="deleteOrder('${o.id}')">🗑 Löschen</button></div></div>`;return d}
-function renderOrders(){let box=$('orderList');box.innerHTML='';let query=($('orderSearch')?.value||'').trim().toLocaleLowerCase('de-DE');let active=orders.filter(o=>['offen','bearbeitung'].includes(o.status||'offen')).filter(o=>!query||[o.kunde,o.auftragsnr,o.objekt,o.angebotsnr,o.kontakt,o.arbeiten].some(v=>String(v||'').toLocaleLowerCase('de-DE').includes(query))).sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));if(!active.length){box.innerHTML='<p class="empty-state">'+(query?'Keine passenden Aufträge gefunden.':'Keine offenen oder bearbeiteten Aufträge vorhanden.')+'</p>';return}let open=active.filter(o=>(o.status||'offen')==='offen'),work=active.filter(o=>o.status==='bearbeitung');[{title:'Offene Aufträge',items:open},{title:'In Bearbeitung',items:work}].forEach(g=>{let sec=document.createElement('section');sec.className='order-group';sec.innerHTML=`<div class="order-group-title"><h3>${g.title}</h3><span>${g.items.length}</span></div>`;if(!g.items.length){let e=document.createElement('p');e.className='empty-state group-empty';e.textContent='Keine Aufträge in diesem Bereich.';sec.appendChild(e)}else g.items.forEach(o=>sec.appendChild(orderCard(o)));box.appendChild(sec)})}
-function renderOffice(){let box=$('officeList');if(!box)return;box.innerHTML='';let office=orders.filter(o=>['erledigt','abgeschlossen'].includes(o.status||'')).sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));if(!office.length){box.innerHTML='<p class="empty-state">Noch keine erledigten oder abgeschlossenen Aufträge.</p>';return}let erledigt=office.filter(o=>o.status==='erledigt'),abgeschlossen=office.filter(o=>o.status==='abgeschlossen');[{title:'Erledigt',items:erledigt},{title:'Abgeschlossen',items:abgeschlossen}].forEach(g=>{if(!g.items.length)return;let sec=document.createElement('section');sec.className='order-group';sec.innerHTML=`<div class="order-group-title"><h3>${g.title}</h3><span>${g.items.length}</span></div>`;g.items.forEach(o=>sec.appendChild(orderCard(o)));box.appendChild(sec)})}
+function orderCard(o){let d=document.createElement('article');d.className='order-card';let m=o.montage||{};let statusLabel={offen:'Offen',bearbeitung:'In Bearbeitung',erledigt:'Erledigt',abgeschlossen:'Ohne Terminvergabe',ohne_terminvergabe:'Ohne Terminvergabe'}[o.status]||o.status||'Offen';let dueHtml='';if(m.datum){let today=new Date();today.setHours(0,0,0,0);let due=new Date(m.datum+'T00:00:00');due.setHours(0,0,0,0);let diff=Math.round((due-today)/86400000);if(o.status==='erledigt'){dueHtml='<p class="order-due order-due-done">✓ Auftrag erledigt</p>';}else if(diff<0){dueHtml=`<p class="order-due order-due-overdue">Überfällig seit ${Math.abs(diff)} ${Math.abs(diff)===1?'Tag':'Tagen'}</p>`;}else if(diff===0){dueHtml='<p class="order-due order-due-today">Heute fällig</p>';}else{dueHtml=`<p class="order-due order-due-soon">Fällig in ${diff} ${diff===1?'Tag':'Tagen'}</p>`;}}d.innerHTML=`<div class="order-main"><div><span class="eyebrow">${statusLabel}</span><h3>${o.auftragsnr||''} · ${o.kunde||'Ohne Auftraggeber'}</h3><p>📅 <b>${m.art||'Montagetermin'}:</b> ${m.datum?new Date(m.datum+'T12:00').toLocaleDateString('de-DE'): 'nicht geplant'} ${m.zeit?'· '+m.zeit+' Uhr':''}</p>${dueHtml}<p class="order-address">📍 ${o.objekt||'Keine Adresse hinterlegt'}</p>${o.angebotsnr?`<p>🏷️ Angebot: ${o.angebotsnr}</p>`:''}</div><div class="order-actions"><button onclick="openOrder('${o.id}')">Öffnen</button><button onclick="navigateTo('${encodeURIComponent(o.objekt||'')}')">🧭 Ab zur Baustelle</button><button onclick="addOrderToCalendar('${o.id}')">📅 Kalender</button><button class="danger" onclick="deleteOrder('${o.id}')">🗑 Löschen</button></div></div>`;return d}
+function renderOrders(){let box=$('orderList');box.innerHTML='';let query=($('orderSearch')?.value||'').trim().toLocaleLowerCase('de-DE');let sortMode=$('montageSort')?.value||'newest';let active=orders.filter(o=>['offen','bearbeitung','abgeschlossen','ohne_terminvergabe'].includes(o.status||'offen')).filter(o=>!query||[o.kunde,o.auftragsnr,o.objekt,o.angebotsnr,o.kontakt,o.arbeiten].some(v=>String(v||'').toLocaleLowerCase('de-DE').includes(query)));const byMontageDate=(a,b)=>{let da=String(a.montage?.datum||''),db=String(b.montage?.datum||'');if(!da&&!db)return String(b.updatedAt||'').localeCompare(String(a.updatedAt||''));if(!da)return 1;if(!db)return -1;let cmp=da.localeCompare(db);return sortMode==='newest'?cmp:-cmp};active.sort(byMontageDate);if(!active.length){box.innerHTML='<p class="empty-state">'+(query?'Keine passenden Aufträge gefunden.':'Keine offenen, bearbeiteten oder Aufträge ohne Terminvergabe vorhanden.')+'</p>';return}let open=active.filter(o=>(o.status||'offen')==='offen'),work=active.filter(o=>o.status==='bearbeitung'),noAppointment=active.filter(o=>['abgeschlossen','ohne_terminvergabe'].includes(o.status));[{title:'Offene Aufträge',items:open},{title:'In Bearbeitung',items:work},{title:'Ohne Terminvergabe',items:noAppointment}].forEach(g=>{let sec=document.createElement('section');sec.className='order-group';sec.innerHTML=`<div class="order-group-title"><h3>${g.title}</h3><span>${g.items.length}</span></div>`;if(!g.items.length){let e=document.createElement('p');e.className='empty-state group-empty';e.textContent='Keine Aufträge in diesem Bereich.';sec.appendChild(e)}else g.items.forEach(o=>sec.appendChild(orderCard(o)));box.appendChild(sec)})}
+function renderOffice(){let box=$('officeList');if(!box)return;box.innerHTML='';let office=orders.filter(o=>o.status==='erledigt').sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));if(!office.length){box.innerHTML='<p class="empty-state">Noch keine erledigten Aufträge.</p>';return}let sec=document.createElement('section');sec.className='order-group';sec.innerHTML=`<div class="order-group-title"><h3>Erledigt</h3><span>${office.length}</span></div>`;office.forEach(o=>sec.appendChild(orderCard(o)));box.appendChild(sec)}
 function navigateTo(addr){if(!addr){alert('Keine Objektadresse hinterlegt.');return}window.open('https://www.google.com/maps/search/?api=1&query='+addr,'_blank')}
 function addOrderToCalendar(id){let o=orders.find(x=>x.id===id);if(!o)return;downloadICS(o)}
 function addToCalendar(){let d=collect();if(!d.montage.datum||!d.montage.zeit){alert('Bitte Montagetermin mit Datum und Uhrzeit eintragen.');return}downloadICS(d)}
@@ -137,12 +137,12 @@ function scheduleCloudRefresh(){
 });
 window.initDachwerkCloud=async function(){if(cloudInitialized||!isCloudUser())return;cloudInitialized=true;await loadCloudData(false);if(cloudChannel)sb().removeChannel(cloudChannel);cloudChannel=sb().channel('dachwerk-live-sync').on('postgres_changes',{event:'*',schema:'public',table:'dachwerk_orders'},scheduleCloudRefresh).on('postgres_changes',{event:'*',schema:'public',table:'dachwerk_materials'},scheduleCloudRefresh).on('postgres_changes',{event:'*',schema:'public',table:'dachwerk_setup_items'},scheduleCloudRefresh).subscribe();};
 function voiceInput(){if(!('webkitSpeechRecognition'in window||'SpeechRecognition'in window)){alert('Spracheingabe wird von diesem Browser nicht unterstützt.');return}let R=window.SpeechRecognition||window.webkitSpeechRecognition,r=new R();r.lang='de-DE';r.interimResults=false;r.onresult=e=>{$('arbeiten').value+=($('arbeiten').value?'\n':'')+e.results[0][0].transcript};r.start()}
-function canvasSetup(id){let c=$(id),ctx=c.getContext('2d'),draw=false;function size(){let d=window.devicePixelRatio||1,w=c.clientWidth||420,h=160;c.width=w*d;c.height=h*d;ctx.scale(d,d);ctx.lineWidth=2;ctx.strokeStyle='#174a83';ctx.lineCap='round'}size();let pos=e=>{let r=c.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top]};c.addEventListener('pointerdown',e=>{draw=true;c.setPointerCapture(e.pointerId);let [x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y)});c.addEventListener('pointermove',e=>{if(!draw)return;let[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()});['pointerup','pointercancel'].forEach(x=>c.addEventListener(x,()=>draw=false))}
-function clearSig(id){let c=$(id),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height)}
-function loadSignature(id,data){const c=$(id);clearSig(id);if(!data)return;const img=new Image();img.onload=()=>{const ctx=c.getContext('2d');ctx.drawImage(img,0,0,c.width,c.height)};img.src=data}
+function canvasSetup(id){let c=$(id),ctx=c.getContext('2d'),draw=false;function size(){const d=window.devicePixelRatio||1,w=c.clientWidth||420,h=160;const old=c.__signatureSource&&!c.__signatureDirty?c.__signatureSource:(()=>{try{return c.__signatureDirty?c.toDataURL('image/png'):null}catch(e){return null}})();c.width=Math.round(w*d);c.height=Math.round(h*d);c.__dpr=d;ctx.setTransform(d,0,0,d,0,0);ctx.lineWidth=2;ctx.strokeStyle='#174a83';ctx.lineCap='round';ctx.lineJoin='round';if(old){const img=new Image();img.onload=()=>{if(c.__signatureSource===old||c.__signatureDirty){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(img,0,0,c.width,c.height);ctx.setTransform(c.__dpr||1,0,0,c.__dpr||1,0,0)}};img.src=old}}size();let pos=e=>{let r=c.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top]};c.addEventListener('pointerdown',e=>{draw=true;c.__signatureDirty=true;c.__signatureSource=null;c.setPointerCapture(e.pointerId);let [x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y)});c.addEventListener('pointermove',e=>{if(!draw)return;let[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()});['pointerup','pointercancel','pointerleave'].forEach(x=>c.addEventListener(x,()=>draw=false))}
+function clearSig(id){let c=$(id),ctx=c.getContext('2d');ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,c.width,c.height);ctx.setTransform(c.__dpr||1,0,0,c.__dpr||1,0,0);c.__signatureSource=null;c.__signatureDirty=false}
+function loadSignature(id,data){const c=$(id);clearSig(id);if(!data)return;c.__signatureSource=data;c.__signatureDirty=false;const img=new Image();img.onload=()=>{if(c.__signatureSource!==data||c.__signatureDirty)return;const ctx=c.getContext('2d');ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(img,0,0,c.width,c.height);ctx.setTransform(c.__dpr||1,0,0,c.__dpr||1,0,0);c.__signatureLoaded=true};img.onerror=()=>{console.warn('Unterschrift konnte nicht geladen werden:',id)};img.src=data}
 function escPdf(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fmtDate(v){if(!v)return '';let p=v.split('-');return p.length===3?p[2]+'.'+p[1]+'.'+p[0]:v}
-function sigData(id){let c=$(id);try{return c&&c.toDataURL('image/png')}catch(e){return ''}}
+function sigData(id){let c=$(id);if(!c)return '';if(c.__signatureSource&&!c.__signatureDirty)return c.__signatureSource;try{return c.toDataURL('image/png')}catch(e){return ''}}
 function pdfRows(items, names){
   return items.length ? items.map(x=>'<tr>'+names.map(n=>'<td>'+escPdf(x[n]||'')+'</td>').join('')+'</tr>').join('') : '<tr><td colspan="'+names.length+'" class="pdf-empty">Keine Positionen eingetragen.</td></tr>';
 }
@@ -223,4 +223,174 @@ function createAndSendPDF(){
   };
   window.addEventListener('afterprint',restorePdfTemplate,{once:true});
 }
+
+async function createBackup(){
+  if(!isCloudUser()){alert('Bitte zuerst anmelden und auf die Benutzerfreigabe warten. Für ein vollständiges Backup muss Dachwerk mit Supabase verbunden sein.');return}
+  if(typeof JSZip==='undefined'){alert('Die ZIP-Bibliothek konnte nicht geladen werden. Bitte Internetverbindung prüfen und erneut versuchen.');return}
+  const button=[...document.querySelectorAll('.navbtn')].find(b=>b.textContent.trim()==='Backup erstellen');
+  if(button){button.disabled=true;button.textContent='Backup wird erstellt …'}
+  try{
+    const client=sb();
+    const [or,ma,se]=await Promise.all([
+      client.from('dachwerk_orders').select('id,order_number,data,created_by,updated_at').order('updated_at',{ascending:false}),
+      client.from('dachwerk_materials').select('*').order('material'),
+      client.from('dachwerk_setup_items').select('*').order('bezeichnung')
+    ]);
+    for(const r of [or,ma,se])if(r.error)throw r.error;
+    const zip=new JSZip();
+    const backupOrders=[];
+    for(const row of (or.data||[])){
+      const data={...(row.data||{}),id:row.id,auftragsnr:row.order_number||row.data?.auftragsnr||''};
+      data.photos=[];
+      for(let i=0;i<(row.data?.photos||[]).length;i++){
+        const photo={...(row.data.photos[i])};
+        if(photo.path){
+          const {data:urlData,error:urlError}=await client.storage.from('dachwerk-photos').createSignedUrl(photo.path,300);
+          if(!urlError&&urlData?.signedUrl){
+            try{const response=await fetch(urlData.signedUrl);if(response.ok){const blob=await response.blob();const ext=(blob.type||'image/jpeg').includes('png')?'png':'jpg';const fileName=`fotos/${row.id}/${String(i+1).padStart(2,'0')}-${(photo.name||'foto').replace(/[^a-z0-9._-]/gi,'_')}.${ext}`;zip.file(fileName,blob);photo.backupFile=fileName;}}
+            catch(photoErr){console.warn('Foto konnte nicht ins Backup aufgenommen werden',photo.path,photoErr);}
+          }
+        } else if(photo.src&&photo.src.startsWith('data:image/')){
+          const match=photo.src.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/);
+          if(match){const ext=match[1]==='png'?'png':'jpg';const fileName=`fotos/${row.id}/${String(i+1).padStart(2,'0')}-${(photo.name||'foto').replace(/[^a-z0-9._-]/gi,'_')}.${ext}`;zip.file(fileName,match[2],{base64:true});photo.backupFile=fileName;}
+        }
+        delete photo.src;data.photos.push(photo);
+      }
+      backupOrders.push({id:row.id,order_number:row.order_number,created_by:row.created_by,updated_at:row.updated_at,data});
+    }
+    const manifest={format:'DACHWERK_BACKUP',version:1,createdAt:new Date().toISOString(),note:'JSON enthält Aufträge inklusive Unterschriften und Auftragsdaten. Fotos sind im Ordner fotos/ enthalten, sofern sie heruntergeladen werden konnten.',orders:backupOrders,materials:ma.data||[],setupItems:se.data||[]};
+    zip.file('dachwerk-backup.json',JSON.stringify(manifest,null,2));
+    zip.file('README.txt','DACHWERK Backup\n\nEnthält Aufträge, Unterschriften, Materialliste, Baustelleneinrichtung und herunterladbare Fotos.\nBewahre diese Datei sicher auf: Sie kann Kundendaten und Unterschriften enthalten.\nDieses Backup ist eine Datensicherung zur Aufbewahrung; ein automatischer Wiederherstellungsimport ist in dieser Funktion noch nicht enthalten.\n');
+    const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:5}});
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`DACHWERK_Backup_${new Date().toISOString().slice(0,10)}.zip`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    alert(`Backup erstellt. ${backupOrders.length} Aufträge, ${ma.data?.length||0} Materialien und ${se.data?.length||0} Baustelleneinrichtungen wurden exportiert. Bitte die ZIP-Datei sicher auf deinem Computer speichern.`);
+  }catch(e){console.error('DACHWERK Backup fehlgeschlagen',e);alert('Backup fehlgeschlagen: '+(e?.message||'Unbekannter Fehler'));}
+  finally{if(button){button.disabled=false;button.textContent='Backup erstellen'}}
+}
+
 window.addEventListener('load',()=>{canvasSetup('sigKunde');canvasSetup('sigFirma');resetForm();renderOrders();renderOffice();renderMasters();updateStorage()});
+
+/* Tagesplan: responsive map view. Orders remain in Supabase; visibility preferences are device-local. */
+let tagesplanMap=null,tagesplanMarkers=[],tagesplanRouteLine=null,tagesplanLocations=[],tagesplanSelected=[];
+const TAGESPLAN_GEO_KEY='dw_tagesplan_geocodes_v2',TAGESPLAN_HIDDEN_KEY='dw_tagesplan_hidden_orders_v1';
+function tagesplanHidden(){try{return JSON.parse(localStorage.getItem(TAGESPLAN_HIDDEN_KEY)||'[]')}catch{return []}}
+function saveTagesplanHidden(ids){try{localStorage.setItem(TAGESPLAN_HIDDEN_KEY,JSON.stringify(ids))}catch(e){console.warn('Sichtbarkeit konnte nicht gespeichert werden',e)}}
+function initTagesplan(){
+ const date=$('tagesplanDate'),mapEl=$('tagesplanMap'),msg=$('tagesplanMessage');
+ if(date&&!date.value)date.value=new Date().toISOString().slice(0,10);
+ if(!mapEl)return;
+ if(!window.L){if(msg)msg.textContent='Die Kartenbibliothek wurde nicht geladen. Prüfe die Internetverbindung und lade die App neu. Falls du die App als Home-Bildschirm-App nutzt, öffne sie einmal direkt im Browser.';return}
+ mapEl.style.display='block';mapEl.style.width='100%';mapEl.style.height=window.innerWidth<700?'55vh':'min(62vh, 620px)';mapEl.style.minHeight='320px';
+ if(!tagesplanMap){
+  try{tagesplanMap=L.map(mapEl,{preferCanvas:true,zoomControl:true}).setView([51.1,9.1],8);
+   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap-Mitwirkende',crossOrigin:true}).addTo(tagesplanMap)
+    .on('tileerror',()=>{if(msg)msg.textContent='Die Karte ist gestartet, aber Kartenkacheln konnten nicht geladen werden. Prüfe Internetverbindung, Inhaltsblocker oder VPN.'});
+  }catch(e){console.error('Tagesplan-Karte konnte nicht initialisiert werden',e);if(msg)msg.textContent='Karte konnte nicht gestartet werden: '+(e.message||'unbekannter Fehler');return}
+ }
+ const refreshSize=()=>{if(tagesplanMap){tagesplanMap.invalidateSize({pan:false});if(tagesplanMarkers.length){try{const visible=tagesplanLocations.filter(x=>x.marker&&tagesplanMap.hasLayer(x.marker));if(visible.length)tagesplanMap.fitBounds(L.featureGroup(visible.map(x=>x.marker)).getBounds().pad(.12),{maxZoom:13})}catch(e){}}}};
+ requestAnimationFrame(refreshSize);setTimeout(refreshSize,250);setTimeout(refreshSize,800);renderTagesplanStops();
+}
+function tagesplanAddress(o){return String(o.objekt||'').trim()}
+function tagesplanOrderLabel(o){return (o.auftragsnr||'Auftrag')+' · '+(o.kunde||'Ohne Auftraggeber')}
+function tagesplanGeocodes(){try{return JSON.parse(localStorage.getItem(TAGESPLAN_GEO_KEY)||'{}')}catch{return {}}}
+function tagesplanDistance(a,b){const rad=x=>x*Math.PI/180,R=6371,dLat=rad(b.lat-a.lat),dLon=rad(b.lng-a.lng),x=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+async function loadTagesplanLocations(){
+ initTagesplan();if(!window.L||!tagesplanMap)return;
+ const btn=$('tagesplanLoadBtn');if(btn){btn.disabled=true;btn.textContent='Aufträge werden geladen …'}
+ // Use the complete mirrored orders array, regardless of status; only records without an address cannot be pinned.
+ const eligible=orders.filter(o=>tagesplanAddress(o)),geo=tagesplanGeocodes(),hidden=new Set(tagesplanHidden());tagesplanLocations=[];tagesplanSelected=[];
+ tagesplanMarkers.forEach(m=>{try{tagesplanMap.removeLayer(m)}catch(e){}});tagesplanMarkers=[];
+ if(tagesplanRouteLine){tagesplanMap.removeLayer(tagesplanRouteLine);tagesplanRouteLine=null}
+ let hits=0,misses=0;
+ try{
+  for(let i=0;i<eligible.length;i++){
+   const o=eligible[i],addr=tagesplanAddress(o);let point=geo[addr];
+   if(!point){const msg=$('tagesplanMessage');if(msg)msg.textContent='Suche Kartenposition '+(i+1)+' von '+eligible.length+' …';
+    try{const url='https://photon.komoot.io/api/?limit=1&q='+encodeURIComponent(addr+(addr.toLowerCase().includes('deutschland')?'':', Deutschland'));const res=await fetch(url);if(res.ok){const j=await res.json(),f=j.features&&j.features[0];if(f){point={lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0],label:f.properties.name||addr};geo[addr]=point;try{localStorage.setItem(TAGESPLAN_GEO_KEY,JSON.stringify(geo))}catch(e){}}}}catch(e){console.warn('Geocoding fehlgeschlagen',addr,e)}
+    await new Promise(resolve=>setTimeout(resolve,1050));
+   }
+   if(point&&Number.isFinite(Number(point.lat))&&Number.isFinite(Number(point.lng))){
+    const item={id:String(o.id||o.auftragsnr||addr),order:o,lat:Number(point.lat),lng:Number(point.lng),address:addr,hidden:hidden.has(String(o.id||o.auftragsnr||addr)),marker:null};tagesplanLocations.push(item);
+    const popup='<b>'+escapeTagesplan(tagesplanOrderLabel(o))+'</b><br>'+escapeTagesplan(addr)+'<br>'+(o.montage?.datum?escapeTagesplan(o.montage.datum):'Kein Termin')+'<br><button type="button" onclick="addTagesplanStop(&quot;'+escapeTagesplan(item.id)+'&quot;)">Stopp hinzufügen</button>';
+    item.marker=L.marker([item.lat,item.lng]).bindPopup(popup);if(!item.hidden)item.marker.addTo(tagesplanMap);tagesplanMarkers.push(item.marker);hits++;
+   }else{misses++;tagesplanLocations.push({id:String(o.id||o.auftragsnr||addr),order:o,address:addr,hidden:hidden.has(String(o.id||o.auftragsnr||addr)),missing:true})}
+  }
+  const visible=tagesplanLocations.filter(x=>!x.hidden&&!x.missing&&x.marker);
+  if(visible.length){tagesplanMap.fitBounds(L.featureGroup(visible.map(x=>x.marker)).getBounds().pad(.12),{maxZoom:13})}else{tagesplanMap.setView([51.1,9.1],8)}
+  const msg=$('tagesplanMessage');if(msg)msg.textContent='Aufträge mit Adresse: '+eligible.length+' · Kartenpositionen gefunden: '+hits+' · Ohne Kartenposition: '+misses+'. Alle Status werden berücksichtigt. Sichtbarkeit wird auf diesem Gerät gespeichert. Entfernungen sind Luftlinie.';
+  renderTagesplanStops();
+ }finally{if(btn){btn.disabled=false;btn.textContent='Baustellen laden'}}
+}
+function escapeTagesplan(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function toggleTagesplanOrder(id,checked){const x=tagesplanLocations.find(v=>v.id===id);if(!x)return;x.hidden=!checked;const hidden=new Set(tagesplanHidden());if(checked)hidden.delete(id);else hidden.add(id);saveTagesplanHidden([...hidden]);if(x.marker&&tagesplanMap){if(checked)x.marker.addTo(tagesplanMap);else tagesplanMap.removeLayer(x.marker)}renderTagesplanStops();}
+function setTagesplanAllVisible(visible){const hidden=new Set(tagesplanHidden());tagesplanLocations.forEach(x=>{x.hidden=!visible;if(visible)hidden.delete(x.id);else hidden.add(x.id);if(x.marker&&tagesplanMap){if(visible)x.marker.addTo(tagesplanMap);else tagesplanMap.removeLayer(x.marker)}});saveTagesplanHidden([...hidden]);if(visible){const shown=tagesplanLocations.filter(x=>!x.missing&&x.marker);if(shown.length)tagesplanMap.fitBounds(L.featureGroup(shown.map(x=>x.marker)).getBounds().pad(.12),{maxZoom:13})}renderTagesplanStops()}
+function addTagesplanStop(id){if(!tagesplanSelected.includes(id)){tagesplanSelected.push(id);renderTagesplanStops()}if(tagesplanMap){const x=tagesplanLocations.find(v=>v.id===id);if(x&&!x.missing)tagesplanMap.setView([x.lat,x.lng],Math.max(tagesplanMap.getZoom(),12))}}
+function removeTagesplanStop(id){tagesplanSelected=tagesplanSelected.filter(x=>x!==id);renderTagesplanStops()}
+function clearTagesplanRoute(){tagesplanSelected=[];renderTagesplanStops()}
+function renderTagesplanStops(){
+ const box=$('tagesplanStops'),dist=$('tagesplanDistances');if(!box||!dist)return;box.innerHTML='';
+ const query=String($('tagesplanSearch')?.value||'').trim().toLowerCase();const filtered=tagesplanLocations.filter(x=>!query||[tagesplanOrderLabel(x.order),x.address].join(' ').toLowerCase().includes(query));
+ const count=$('tagesplanCount');if(count)count.textContent=filtered.length+' von '+tagesplanLocations.length+' Aufträgen · '+tagesplanLocations.filter(x=>!x.hidden&&!x.missing).length+' sichtbar auf der Karte';
+ if(!tagesplanLocations.length)box.innerHTML='<p class="subtext">Noch keine Baustellen geladen. Tippe auf „Baustellen laden“.</p>';
+ else filtered.forEach(x=>{const chosen=tagesplanSelected.includes(x.id),row=document.createElement('div');row.className='tagesplan-stop';row.innerHTML='<label class="tagesplan-visible"><input type="checkbox" '+(!x.hidden?'checked':'')+' onchange="toggleTagesplanOrder(&quot;'+escapeTagesplan(x.id)+'&quot;,this.checked)" '+(x.missing?'disabled':'')+'><span>Karte</span></label><div class="stop-info"><b>'+escapeTagesplan(tagesplanOrderLabel(x.order))+'</b><small>'+escapeTagesplan(x.address)+(x.missing?' · <b>Keine Kartenposition gefunden</b>':'')+'</small></div><div class="tagesplan-stop-actions">'+(chosen?'<button onclick="removeTagesplanStop(&quot;'+escapeTagesplan(x.id)+'&quot;)">Aus Route entfernen</button>':'<button '+(x.missing?'disabled':'')+' onclick="addTagesplanStop(&quot;'+escapeTagesplan(x.id)+'&quot;)">Stopp hinzufügen</button>')+'</div>';box.appendChild(row)});
+ if(tagesplanRouteLine&&tagesplanMap){tagesplanMap.removeLayer(tagesplanRouteLine);tagesplanRouteLine=null}
+ const selected=tagesplanSelected.map(id=>tagesplanLocations.find(x=>x.id===id)).filter(x=>x&&!x.missing&&!x.hidden);
+ if(selected.length<2){dist.textContent=selected.length?'Wähle mindestens einen weiteren sichtbaren Stopp.':'Noch keine Stopps ausgewählt.';return}
+ let lines=[],coords=[],total=0;for(let i=0;i<selected.length;i++){coords.push([selected[i].lat,selected[i].lng]);if(i>0){const km=tagesplanDistance(selected[i-1],selected[i]);total+=km;lines.push(i+'. '+tagesplanOrderLabel(selected[i-1].order)+' → '+tagesplanOrderLabel(selected[i].order)+': ca. '+km.toFixed(1).replace('.',',')+' km (Luftlinie)')}}
+ if(tagesplanMap)tagesplanRouteLine=L.polyline(coords,{color:'#19734a',weight:4,dashArray:'8 7'}).addTo(tagesplanMap);dist.textContent=lines.join('\n')+'\n\nGesamte Luftlinie: ca. '+total.toFixed(1).replace('.',',')+' km';
+}
+
+
+// KI-Dachzeichnung: separater Workflow, bestehende Auftrags- und Fotodaten bleiben erhalten.
+let technicalDrawingResultUrl = '';
+let technicalDrawingAnnotatedSrc = '';
+function setTechnicalDrawingStatus(message, error=false){const el=$('technicalDrawingStatus');if(el){el.textContent=message;el.style.color=error?'#a22':''}}
+async function generateTechnicalDrawing(){
+ const input=$('technicalDrawingInput'),file=input?.files?.[0],button=$('generateTechnicalDrawingButton');
+ if(!file){setTechnicalDrawingStatus('Bitte zuerst ein Dachfoto auswählen.',true);return}
+ if(!isCloudUser()||!window.dachwerkSupabase){setTechnicalDrawingStatus('Bitte mit einem freigegebenen DACHWERK-Konto anmelden.',true);return}
+ if(!currentOrderId){setTechnicalDrawingStatus('Bitte den Auftrag zuerst speichern. Danach kannst du die Zeichnung direkt diesem Auftrag zuordnen.',true);return}
+ button.disabled=true;$('addTechnicalDrawingButton').disabled=true;$('writeTechnicalDimensionsButton').disabled=true;technicalDrawingAnnotatedSrc='';setTechnicalDrawingStatus('Foto wird vorbereitet …');
+ try{
+  const compressed=await compress(file);setTechnicalDrawingStatus('WaveSpeedAI-Auftrag wird gestartet …');
+  const client=window.dachwerkSupabase;
+  const {data:submitted,error}=await client.functions.invoke('dachwerk-technical-drawing',{body:{action:'generate',image:compressed.src,view:$('technicalDrawingView').value}});
+  if(error){let detail=error.message||'Unbekannter Fehler';try{if(error.context?.json){const j=await error.context.json();detail=j.error||j.message||detail}}catch(_){}throw new Error(detail)}
+  if(submitted?.error)throw new Error(submitted.error);
+  const taskId=submitted?.predictionId;if(!taskId)throw new Error('WaveSpeedAI hat keine Aufgaben-ID geliefert. Prüfe die Supabase-Logs, bevor du erneut startest.');
+  const started=Date.now();let imageUrl='';
+  while(Date.now()-started<180000){await new Promise(r=>setTimeout(r,3000));setTechnicalDrawingStatus('Technische Zeichnung wird erstellt …');const {data:status,error:statusError}=await client.functions.invoke('dachwerk-technical-drawing',{body:{action:'status',predictionId:taskId}});if(statusError)throw new Error(statusError.message||'Statusabfrage fehlgeschlagen');if(status?.error)throw new Error(status.error);const state=String(status?.status||'').toLowerCase();if(state==='completed'){imageUrl=status.imageUrl||status.outputs?.[0]||'';break}if(['failed','cancelled','timeout','deleted'].includes(state))throw new Error(status.error||'WaveSpeedAI konnte die Zeichnung nicht erstellen.');}
+  if(!imageUrl)throw new Error('Die Erstellung dauert zu lange. Prüfe zuerst die WaveSpeedAI-Historie, bevor du erneut startest.');
+  technicalDrawingResultUrl=imageUrl;technicalDrawingAnnotatedSrc='';$('technicalDrawingImage').src=imageUrl;$('technicalDrawingPreview').hidden=false;$('writeTechnicalDimensionsButton').disabled=false;
+  const dims=[$('technicalDrawingLength').value.trim()&&('Länge: '+$('technicalDrawingLength').value.trim()),$('technicalDrawingWidth').value.trim()&&('Breite: '+$('technicalDrawingWidth').value.trim()),$('technicalDrawingNotes').value.trim()].filter(Boolean).join(' · ');
+  $('technicalDrawingCaption').textContent=( $('technicalDrawingView').value==='plan'?'Dachaufsicht':'Dachansicht')+(dims?' — '+dims:'')+'. KI-Skizze; Maße nicht automatisch vermessen.';
+  $('addTechnicalDrawingButton').disabled=false;setTechnicalDrawingStatus('Zeichnung erstellt. Prüfe die Skizze und ergänze Maße, bevor du sie zum Auftrag speicherst.');
+ }catch(e){setTechnicalDrawingStatus('Fehler: '+(e.message||e),true)}finally{button.disabled=false}
+}
+async function technicalDrawingToDataUrl(){
+ if(technicalDrawingAnnotatedSrc)return technicalDrawingAnnotatedSrc;
+ const response=await fetch(technicalDrawingResultUrl);if(!response.ok)throw new Error('Bildabruf fehlgeschlagen');const blob=await response.blob();return await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob)});
+}
+async function writeTechnicalDimensionsOnImage(){
+ if(!technicalDrawingResultUrl){setTechnicalDrawingStatus('Bitte zuerst eine Zeichnung erstellen.',true);return}
+ const btn=$('writeTechnicalDimensionsButton');btn.disabled=true;
+ try{
+  const src=await technicalDrawingToDataUrl();const img=new Image();img.src=src;await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Zeichnungsbild konnte nicht geladen werden.'))});
+  const scale=Math.min(1,1800/Math.max(img.naturalWidth,img.naturalHeight));const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,w,h);
+  const length=$('technicalDrawingLength').value.trim(),width=$('technicalDrawingWidth').value.trim(),notes=$('technicalDrawingNotes').value.trim();const rows=[];if(length)rows.push('Länge: '+length);if(width)rows.push('Breite: '+width);if(notes)rows.push('Weitere Maße / Hinweise: '+notes);if(!rows.length)throw new Error('Bitte zuerst mindestens ein Maß oder einen Hinweis eintragen.');
+  const font=Math.max(18,Math.round(w*.024)),pad=Math.max(14,Math.round(w*.018)),line=Math.round(font*1.45);ctx.font=`600 ${font}px Arial, sans-serif`;const wrapped=[];for(const row of rows){let current='';for(const word of row.split(/\s+/)){const test=current?current+' '+word:word;if(ctx.measureText(test).width>w-pad*2&&current){wrapped.push(current);current=word}else current=test}if(current)wrapped.push(current)}const panelH=pad*2+wrapped.length*line;ctx.fillStyle='rgba(255,255,255,0.96)';ctx.fillRect(0,h-panelH,w,panelH);ctx.strokeStyle='#222';ctx.lineWidth=Math.max(2,w*.002);ctx.beginPath();ctx.moveTo(0,h-panelH);ctx.lineTo(w,h-panelH);ctx.stroke();ctx.fillStyle='#111';wrapped.forEach((row,i)=>ctx.fillText(row,pad,h-panelH+pad+font+i*line,w-pad*2));
+  technicalDrawingAnnotatedSrc=canvas.toDataURL('image/jpeg',.92);$('technicalDrawingImage').src=technicalDrawingAnnotatedSrc;$('addTechnicalDrawingButton').disabled=false;setTechnicalDrawingStatus('Maße wurden sichtbar unten in das Bild geschrieben. Du kannst die Felder ändern und erneut auf „Maße ins Bild schreiben“ tippen.');
+ }catch(e){setTechnicalDrawingStatus('Fehler beim Beschriften: '+(e.message||e),true)}finally{btn.disabled=false}
+}
+async function addTechnicalDrawingToPhotos(){
+ if(!technicalDrawingResultUrl){setTechnicalDrawingStatus('Bitte zuerst eine Zeichnung erstellen.',true);return}
+ const btn=$('addTechnicalDrawingButton');btn.disabled=true;
+ try{
+  let src='';
+  try{src=technicalDrawingAnnotatedSrc||await technicalDrawingToDataUrl()}catch(_){throw new Error('Das Ergebnisbild kann vom Browser nicht dauerhaft übernommen werden (WaveSpeedAI-Bild-URL/CORS). Bitte prüfe die Supabase-Logs bzw. WaveSpeedAI-Ausgabe.')}
+  const dims=[$('technicalDrawingLength').value.trim()&&('Länge '+$('technicalDrawingLength').value.trim()),$('technicalDrawingWidth').value.trim()&&('Breite '+$('technicalDrawingWidth').value.trim()),$('technicalDrawingNotes').value.trim()].filter(Boolean).join(' · ');
+  const view=$('technicalDrawingView').value==='plan'?'Dachaufsicht':'Dachansicht';
+  photos.push({src,size:Math.round(src.length*.75),name:`Technische Zeichnung – ${view}${dims?' – '+dims:''}.jpg`,technicalDrawing:true,view,length:$('technicalDrawingLength').value.trim(),width:$('technicalDrawingWidth').value.trim(),notes:$('technicalDrawingNotes').value.trim()});
+  renderPhotos();updateStorage();setTechnicalDrawingStatus('Zur Baustellenfoto-Liste hinzugefügt. Klicke anschließend auf „Auftrag speichern“, damit Zeichnung und Maße in Supabase gesichert werden.');
+ }catch(e){setTechnicalDrawingStatus('Fehler: '+e.message,true)}finally{btn.disabled=false}
+}
